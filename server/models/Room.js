@@ -1,7 +1,7 @@
 const mongoose = require('mongoose');
 
 const RoomSchema = new mongoose.Schema({
-  roomId: { type: String, required: true, unique: true },
+  //roomId: { type: String, required: true, unique: true },
   roomCode: { type: String, required: true, unique: true }, // Unique room code
   leaderId: { type: String, required: true },
   players: [{ type: String }], // Liste des IDs des joueurs

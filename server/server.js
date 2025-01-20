@@ -90,14 +90,15 @@ app.get('/auth/callback', async (req, res) => {
 
         const { access_token, refresh_token } = response.data;
 
-        // Fetch the user's Spotify ID (you may need to make an additional request to get this)
+        // Fetch the user's Spotify ID and display name
         const userInfoResponse = await axios.get('https://api.spotify.com/v1/me', {
-          headers: {
-              Authorization: `Bearer ${access_token}`,
-          },
+            headers: {
+                Authorization: `Bearer ${access_token}`,
+            },
         });
 
         const spotifyId = userInfoResponse.data.id; // Get the Spotify user ID
+        const displayName = userInfoResponse.data.display_name; // Get the user's display name
 
         // Store the tokens in the database
         await User.findOneAndUpdate(
@@ -106,8 +107,8 @@ app.get('/auth/callback', async (req, res) => {
             { upsert: true, new: true } // Create a new user if not found
         );
 
-        // For now, just send them back to the client for testing
-        res.json({ access_token, refresh_token });
+        // Redirect to the React application with the user's info
+        res.redirect(`http://localhost:3000?spotifyId=${spotifyId}&displayName=${encodeURIComponent(displayName)}`);
     } catch (error) {
         console.error('Error getting tokens:', error);
         res.status(500).send('Authentication failed');
@@ -122,7 +123,7 @@ mongoose
 
 
 // Function to create a room
-async function createRoom(name, leaderId, spotifyTokenLeader) {
+/*async function createRoom(name, leaderId, spotifyTokenLeader) {
   const roomId = uuidv4(); // Generate a unique roomId
   const room = new Room({
     roomId: roomId,
@@ -132,18 +133,26 @@ async function createRoom(name, leaderId, spotifyTokenLeader) {
   });
   await room.save();
   return room;
-}
+}*/
 
 // Socket.io connections
 io.on('connection', (socket) => {
   console.log('A player connected:', socket.id);
 
   // When the leader creates a room
-  socket.on('createRoom', async (name, leaderId, spotifyTokenLeader) => {
+  socket.on('createRoom', async ({ creator }) => {
     try {
-      const room = await createRoom(name, leaderId, spotifyTokenLeader);
-      socket.emit('roomCreated', room); // Emit the created room
-      console.log(`Room "${name}" created with leader "${leaderId}"`);
+      const roomCode = Math.random().toString(36).substring(2, 8); // Generate a random room code
+      const newRoom = new Room({
+         roomCode: roomCode,
+         leaderId: creator
+      });
+      await newRoom.save(); // Save the room to the database
+      
+      // Emit the roomCreated event to the socket that created the room
+      socket.emit('roomCreated', roomCode);
+
+      console.log(`Room created successfully with code: ${roomCode}`);
     } catch (err) {
       console.error('Error creating room:', err);
       socket.emit('error', 'Failed to create room');
@@ -151,22 +160,22 @@ io.on('connection', (socket) => {
   });
 
   // When a player joins a room
-  socket.on('joinRoom', async (roomId, playerId) => {
+  socket.on('joinRoom', async ({roomCode}) => {
     try {
-      const room = await Room.findOne({ roomId }); // Use roomId instead of _id
+      const room = await Room.findOne({ roomCode });
       if (room) {
         // Add the player to the room
-        room.players.push(playerId);
-        await room.save();
-  
+        socket.join(roomCode); // Join the room
+        room.players.push(socket.id); // Add player to the room
+        await room.save(); // Save the updated room
+        socket.emit('roomJoined', roomCode); // Notify the player
+        console.log(`Player "${socket.id}" joined room "${roomCode}"`);
+
         // Check if the room has 2 players to start the game
         if (room.players.length === 2) {
-          io.to(roomId).emit('startGame', room);
-          console.log(`Game started in room "${roomId}" with players "${room.players.join(', ')}"`);
+          io.to(room).emit('startGame', room);
+          console.log(`Game started in room "${roomCode}" with players "${room.players.join(', ')}"`);
         }
-  
-        socket.emit('roomJoined', room); // Confirm joining the room
-        console.log(`Player "${playerId}" joined room "${roomId}"`);
       } else {
         socket.emit('error', 'Room not found');
       }
